@@ -525,7 +525,7 @@ function ProjectRow({ project: p, contractors, onClick }) {
         <div style={{ fontSize:12, color:'#9CA3AF' }}>{p.property}</div>
       </div>
       <span style={{ ...T.badge(p.status), flexShrink:0 }}>{STATUS_LABELS[p.status]}</span>
-      {score>0 && <span style={{ ...T.priLabel(score), flexShrink:0 }}>{score}/20</span>}
+      {score>0 && <span style={{ ...T.priLabel(score), flexShrink:0, textTransform:'capitalize' }}>{priorityLabel(score)}</span>}
       {p.milestones?.length>0 && (
         <div style={{ width:80 }}>
           <div style={{ fontSize:11, color:'#9CA3AF', marginBottom:3, textAlign:'right' }}>{progress}%</div>
@@ -713,15 +713,15 @@ function ProjectDetail({ project: initP, contractors, onEdit, onDelete, onClose,
                       <button onClick={()=>removeMilestone(m.id)} style={{ color:'#D1D5DB', fontSize:16, background:'none', border:'none', cursor:'pointer', lineHeight:1 }}>×</button>
                     </div>
                   </div>
-                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                    <div style={{ flex:1, height:4, background:'#E5E7EB', borderRadius:2, overflow:'hidden' }}>
-                      <div style={{ height:'100%', width:`${m.progress}%`, background:'#10B981', borderRadius:2 }} />
+                  <div style={{ position:'relative', height:20, display:'flex', alignItems:'center' }}>
+                    <div style={{ position:'absolute', left:0, right:0, height:4, background:'#E5E7EB', borderRadius:2, overflow:'hidden', pointerEvents:'none' }}>
+                      <div style={{ height:'100%', width:`${m.progress}%`, background:'#10B981', borderRadius:2, transition:'width .1s' }} />
                     </div>
                     <input type="range" min={0} max={100} value={m.progress}
                       onChange={e=>{ const milestones=p.milestones.map(x=>x.id===m.id?{...x,progress:+e.target.value}:x); setP(prev=>({...prev,milestones})) }}
                       onMouseUp={e=>updateMilestoneProgress(m.id,+e.target.value)}
-                      onTouchEnd={e=>updateMilestoneProgress(m.id,m.progress)}
-                      style={{ width:100, accentColor:'#10B981', cursor:'pointer' }} />
+                      onTouchEnd={()=>updateMilestoneProgress(m.id,m.progress)}
+                      style={{ position:'absolute', left:0, right:0, width:'100%', opacity:0, cursor:'pointer', height:20, margin:0 }} />
                   </div>
                 </div>
               ))
