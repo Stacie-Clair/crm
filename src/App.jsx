@@ -37,12 +37,13 @@ function calcProgress(milestones) {
 function StarRating({ value, onChange }) {
   const [hov, setHov] = useState(0)
   return (
-    <div style={{display:'flex',gap:1}}>
+    <div style={{display:'flex',gap:1,alignItems:'center'}}>
       {[1,2,3,4,5].map(s => (
-        <span key={s} onClick={()=>onChange&&onChange(s)}
+        <span key={s} onClick={()=>onChange&&onChange(s===value?0:s)}
           onMouseEnter={()=>onChange&&setHov(s)} onMouseLeave={()=>setHov(0)}
           style={{cursor:onChange?'pointer':'default',fontSize:16,color:(hov||value)>=s?'#F59E0B':'#D1D5DB',transition:'color .1s',userSelect:'none'}}>★</span>
       ))}
+      {onChange && value>0 && <span onClick={()=>onChange(0)} style={{fontSize:11,color:'#D1D5DB',cursor:'pointer',marginLeft:4,userSelect:'none'}}>clear</span>}
     </div>
   )
 }
@@ -888,12 +889,23 @@ function ProjectDetail({ project: initP, contractors, onEdit, onDelete, onClose,
 }
 
 // ─── Contractor Form ──────────────────────────────────────────────────────────
+const DRAFT_KEY = 'contractorFormDraft'
 function ContractorForm({ initial, onSave, onClose }) {
+  const isNew = !initial?.id
   const norm = c => c ? {...c, referredBy:c.referred_by||c.referredBy||'', tags:c.tags||[], documents:c.documents||[], emails:c.emails||[]} : null
-  const blank = { id:null, name:'', trade:'Electrical', phone:'', email:'', website:'', rating:3, referredBy:'', notes:'', tags:[], documents:[], emails:[] }
-  const [form, setForm] = useState(norm(initial)||blank)
+  const blank = { id:null, name:'', trade:'Electrical', phone:'', email:'', website:'', rating:0, referredBy:'', notes:'', tags:[], documents:[], emails:[] }
+  const getInitial = () => {
+    if (!isNew) return norm(initial)
+    try { const saved = localStorage.getItem(DRAFT_KEY); return saved ? JSON.parse(saved) : blank } catch { return blank }
+  }
+  const [form, setForm] = useState(getInitial)
   const [tagInput, setTagInput] = useState('')
-  const set = (k,v) => setForm(f=>({...f,[k]:v}))
+  const set = (k,v) => setForm(f => {
+    const next = {...f,[k]:v}
+    if (isNew) { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(next)) } catch {} }
+    return next
+  })
+  const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY) } catch {} }
   const addTag = () => { if (tagInput.trim()&&!form.tags.includes(tagInput.trim())) { set('tags',[...form.tags,tagInput.trim()]); setTagInput('') } }
 
   return (
@@ -932,7 +944,7 @@ function ContractorForm({ initial, onSave, onClose }) {
         <label style={T.label}>Notes</label>
         <textarea style={T.textarea} value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Notes about this contractor…" />
       </div>
-      <ModalFooter onClose={onClose} onSave={()=>{if(form.name.trim())onSave(form)}} label="Save Contractor" />
+      <ModalFooter onClose={()=>{clearDraft();onClose()}} onSave={()=>{if(form.name.trim()){clearDraft();onSave(form)}}} label="Save Contractor" />
     </ModalShell>
   )
 }
