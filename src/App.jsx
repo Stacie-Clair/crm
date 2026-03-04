@@ -154,7 +154,7 @@ export default function App() {
     const { id } = data
     const payload = {
       name:data.name, trade:data.trade, phone:data.phone, email:data.email,
-      website:data.website, rating:data.rating,
+      website:data.website, rating:data.rating||null,
       referred_by:data.referredBy||data.referred_by,
       notes:data.notes, tags:data.tags||[], documents:data.documents||[], emails:data.emails||[],
       user_id:session.user.id,
