@@ -742,6 +742,41 @@ function ProjectDetail({ project: initP, contractors, onEdit, onDelete, onClose,
               </div>
             </div>
           )}
+
+          {/* Project details */}
+          <div style={{ marginTop:16, borderTop:'1px solid #F3F4F6', paddingTop:16 }}>
+            <div style={T.label}>Project Details</div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
+              <div style={{ background:'#F9FAFB', borderRadius:9, padding:'9px 13px', border:'1px solid #F3F4F6' }}>
+                <div style={{ fontSize:10, color:'#9CA3AF', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.4px', marginBottom:3 }}>Start Date</div>
+                <div style={{ fontSize:13, fontWeight:500 }}>{fmtDate(p.start_date) || '—'}</div>
+              </div>
+              <div style={{ background:'#F9FAFB', borderRadius:9, padding:'9px 13px', border:'1px solid #F3F4F6' }}>
+                <div style={{ fontSize:10, color:'#9CA3AF', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.4px', marginBottom:3 }}>End Date</div>
+                <div style={{ fontSize:13, fontWeight:500 }}>{fmtDate(p.end_date) || '—'}</div>
+              </div>
+              <div style={{ background:'#F9FAFB', borderRadius:9, padding:'9px 13px', border:'1px solid #F3F4F6' }}>
+                <div style={{ fontSize:10, color:'#9CA3AF', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.4px', marginBottom:3 }}>Budget</div>
+                <div style={{ fontSize:13, fontWeight:500 }}>{fmtCurrency(p.budget)}</div>
+              </div>
+              <div style={{ background:'#F9FAFB', borderRadius:9, padding:'9px 13px', border:'1px solid #F3F4F6' }}>
+                <div style={{ fontSize:10, color:'#9CA3AF', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.4px', marginBottom:3 }}>Spent</div>
+                <div style={{ fontSize:13, fontWeight:500, color:p.spent>p.budget?'#EF4444':'#1D1D1F' }}>{fmtCurrency(p.spent)}</div>
+              </div>
+            </div>
+            {p.description && (
+              <div style={{ marginBottom:8 }}>
+                <div style={{ fontSize:10, color:'#9CA3AF', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.4px', marginBottom:6 }}>Description</div>
+                <div style={{ background:'#F9FAFB', borderRadius:9, padding:'10px 13px', fontSize:13, color:'#374151', lineHeight:1.6, border:'1px solid #F3F4F6' }}>{p.description}</div>
+              </div>
+            )}
+            {p.notes && (
+              <div>
+                <div style={{ fontSize:10, color:'#9CA3AF', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.4px', marginBottom:6 }}>Notes</div>
+                <div style={{ background:'#FFFBEB', borderRadius:9, padding:'10px 13px', fontSize:13, color:'#374151', lineHeight:1.6, border:'1px solid #FDE68A' }}>{p.notes}</div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1171,7 +1206,7 @@ function ProjectForm({ initial, contractors, onSave, onClose }) {
 function ModalShell({ title, onClose, children, maxWidth=560 }) {
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.25)', backdropFilter:'blur(8px)', WebkitBackdropFilter:'blur(8px)', display:'flex', alignItems:'flex-start', justifyContent:'center', zIndex:1000, overflowY:'auto', padding:'40px 16px', animation:'fadeIn .15s ease' }}>
-      <div style={{ background:'#fff', borderRadius:16, width:'100%', maxWidth, padding:28, boxShadow:'0 20px 60px rgba(0,0,0,0.1)', animation:'fadeUp .2s ease' }}>
+      <div style={{ background:'#fff', borderRadius:16, width:'100%', maxWidth, padding:28, boxShadow:'0 20px 60px rgba(0,0,0,0.1)', animation:'fadeUp .2s ease', marginBottom:40 }}>
         {title && (
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
             <h2 style={{ fontSize:17, fontWeight:700, letterSpacing:'-0.3px' }}>{title}</h2>
