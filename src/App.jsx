@@ -189,7 +189,7 @@ export default function App() {
       name:rest.name, property:rest.property, status:rest.status,
       start_date:rest.startDate||rest.start_date||null,
       end_date:rest.endDate||rest.end_date||null,
-      budget:rest.budget||0, spent:rest.spent||0,
+      budget:parseFloat(rest.budget)||0, spent:parseFloat(rest.spent)||0,
       description:rest.description, notes:rest.notes,
       tasks:tasks||[], milestones:milestones||[], bids:bids||[],
       activity_log:activity_log||[], priority_scores:priority_scores||{},
@@ -269,7 +269,7 @@ export default function App() {
           {view==='dashboard'?'Overview':view==='contractors'?'Contractors':'Projects'}
         </h1>
 
-        {view==='dashboard' && <DashboardView contractors={contractors} projects={projects} activeProjects={activeProjects} totalBudget={totalBudget} totalSpent={totalSpent} avgRating={avgRating} setView={setView} setModal={setModal} />}
+        {view==='dashboard' && <DashboardView contractors={contractors} projects={projects} activeProjects={activeProjects} totalBudget={totalBudget} totalSpent={totalSpent} avgRating={avgRating} setView={setView} setModal={setModal} updateProjectField={updateProjectField} setProjects={setProjects} />}
         {view==='contractors' && <ContractorsView contractors={filteredContractors} allCount={contractors.length} search={search} setSearch={setSearch} tradeFilter={tradeFilter} setTradeFilter={setTradeFilter} setModal={setModal} />}
         {view==='projects' && <ProjectsView projects={projects} contractors={contractors} setModal={setModal} />}
       </div>
@@ -293,7 +293,7 @@ function Loader() {
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
-function DashboardView({ contractors, projects, activeProjects, totalBudget, totalSpent, avgRating, setView, setModal }) {
+function DashboardView({ contractors, projects, activeProjects, totalBudget, totalSpent, avgRating, setView, setModal, updateProjectField, setProjects }) {
   const sorted = [...projects].sort((a,b) => calcPriorityScore(b) - calcPriorityScore(a))
   const topPriority = sorted.slice(0,3)
   return (
@@ -304,7 +304,7 @@ function DashboardView({ contractors, projects, activeProjects, totalBudget, tot
           { num:contractors.length, lbl:'Contractors',    color:'#3B82F6', bg:'#EFF6FF', icon:'👷' },
           { num:projects.length,    lbl:'Total Projects', color:'#8B5CF6', bg:'#F5F3FF', icon:'🏗️' },
           { num:activeProjects.length, lbl:'In Progress', color:'#F59E0B', bg:'#FFFBEB', icon:'⚡' },
-          { num:avgRating+'★',      lbl:'Avg Rating',     color:'#10B981', bg:'#ECFDF5', icon:'⭐' },
+          { num:fmtCurrency(totalSpent), lbl:'Total Spent',  color:'#10B981', bg:'#ECFDF5', icon:'💰' },
         ].map(s => (
           <div key={s.lbl} style={{ ...T.card, display:'flex', alignItems:'center', gap:14 }}>
             <div style={{ width:42, height:42, borderRadius:11, background:s.bg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, flexShrink:0 }}>{s.icon}</div>
@@ -362,6 +362,9 @@ function DashboardView({ contractors, projects, activeProjects, totalBudget, tot
         }
       </div>
 
+      {/* Open Tasks */}
+      <OpenTasksSection projects={projects} updateProjectField={updateProjectField} setProjects={setProjects} setModal={setModal} />
+
       {/* Contractors */}
       <div>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
@@ -372,6 +375,92 @@ function DashboardView({ contractors, projects, activeProjects, totalBudget, tot
           {contractors.slice(0,4).map(c=><ContractorCard key={c.id} contractor={c} onClick={()=>setModal({type:'contractor-detail',data:c})} />)}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── Task Item (shared) ──────────────────────────────────────────────────────
+function dueBadge(due, done) {
+  if (!due || done) return null
+  const today = new Date(); today.setHours(0,0,0,0)
+  const d = new Date(due+'T00:00:00')
+  const diff = Math.round((d-today)/(1000*60*60*24))
+  if (diff < 0)  return { label:`${Math.abs(diff)}d overdue`, bg:'#FEF2F2', color:'#EF4444' }
+  if (diff === 0) return { label:'Due today',                 bg:'#FEF3C7', color:'#D97706' }
+  if (diff <= 3)  return { label:`Due in ${diff}d`,           bg:'#FEF3C7', color:'#D97706' }
+  return { label:new Date(due+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}), bg:'#F3F4F6', color:'#6B7280' }
+}
+
+function TaskItem({ task: t, onToggle, onRemove, showProject, projectName, projectStatus }) {
+  const badge = dueBadge(t.due, t.done)
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 11px', background:'#F9FAFB', borderRadius:8, marginBottom:5, border:`1px solid ${badge&&badge.color==='#EF4444'&&!t.done?'#FECACA':'#F3F4F6'}` }}>
+      <div onClick={onToggle} style={{ width:17, height:17, borderRadius:5, border:t.done?'none':'1.5px solid #D1D5DB', background:t.done?'#1D1D1F':'transparent', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', transition:'all .15s' }}>
+        {t.done&&<span style={{ fontSize:9, color:'#fff', fontWeight:800 }}>✓</span>}
+      </div>
+      <span onClick={onToggle} style={{ flex:1, fontSize:13, color:t.done?'#9CA3AF':'#1D1D1F', textDecoration:t.done?'line-through':'none', cursor:'pointer' }}>{t.text}</span>
+      {showProject && projectName && (
+        <span style={{ fontSize:11, color:'#9CA3AF', whiteSpace:'nowrap', maxWidth:140, overflow:'hidden', textOverflow:'ellipsis' }}>{projectName}</span>
+      )}
+      {badge && <span style={{ fontSize:10, fontWeight:600, padding:'2px 7px', borderRadius:5, background:badge.bg, color:badge.color, whiteSpace:'nowrap', flexShrink:0 }}>{badge.label}</span>}
+      {onRemove && <button onClick={onRemove} style={{ color:'#D1D5DB', fontSize:16, background:'none', border:'none', cursor:'pointer', lineHeight:1 }}>×</button>}
+    </div>
+  )
+}
+
+// ─── Open Tasks Section ──────────────────────────────────────────────────────
+function OpenTasksSection({ projects, updateProjectField, setProjects, setModal }) {
+  const [filter, setFilter] = useState('all')
+
+  // Gather all open tasks across all projects
+  const allOpen = []
+  projects.forEach(p => {
+    (p.tasks||[]).filter(t=>!t.done).forEach(t => {
+      allOpen.push({ ...t, projectId:p.id, projectName:p.name, projectStatus:p.status })
+    })
+  })
+
+  const filtered = filter==='all' ? allOpen : allOpen.filter(t=>t.projectStatus===filter)
+  const doneCount = projects.reduce((a,p)=>(a+(p.tasks||[]).filter(t=>t.done).length),0)
+  const totalCount = projects.reduce((a,p)=>(a+(p.tasks||[]).length),0)
+
+  const toggleTask = async (projectId, taskId) => {
+    const project = projects.find(p=>p.id===projectId)
+    if (!project) return
+    const tasks = (project.tasks||[]).map(t=>t.id===taskId?{...t,done:!t.done}:t)
+    const data = await updateProjectField(projectId, {tasks})
+    if (data) setProjects(ps=>ps.map(p=>p.id===projectId?{...data,contractors:p.contractors}:p))
+  }
+
+  if (totalCount===0) return null
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <h2 style={{ fontSize:15, fontWeight:700 }}>Open Tasks</h2>
+          <span style={{ fontSize:12, color:'#9CA3AF' }}>{allOpen.length} remaining · {doneCount}/{totalCount} total done</span>
+        </div>
+        <div style={{ display:'flex', gap:4, background:'#F3F4F6', borderRadius:8, padding:3 }}>
+          {[['all','All'],['in-progress','In Progress'],['planning','Planning']].map(([v,l])=>(
+            <button key={v} onClick={()=>setFilter(v)}
+              style={{ padding:'4px 10px', borderRadius:6, fontSize:11, fontWeight:filter===v?600:500, cursor:'pointer', background:filter===v?'#fff':'transparent', color:filter===v?'#1D1D1F':'#6B7280', border:'none', boxShadow:filter===v?'0 1px 3px rgba(0,0,0,0.08)':'none', transition:'all .15s' }}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filtered.length===0
+        ? <div style={{ ...T.card, textAlign:'center', color:'#9CA3AF', fontSize:13, padding:28 }}>
+            {allOpen.length===0 ? '🎉 All tasks complete!' : 'No open tasks match this filter'}
+          </div>
+        : <div style={{ ...T.card, padding:'4px 6px', overflow:'hidden' }}>
+            {filtered.map((t) => (
+              <TaskItem key={t.id+t.projectId} task={t} onToggle={()=>toggleTask(t.projectId, t.id)} showProject projectName={t.projectName} projectStatus={t.projectStatus} />
+            ))}
+          </div>
+      }
     </div>
   )
 }
@@ -551,6 +640,7 @@ function ProjectDetail({ project: initP, contractors, onEdit, onDelete, onClose,
   const [p, setP] = useState({ ...initP, milestones:initP.milestones||[], bids:initP.bids||[], activity_log:initP.activity_log||[], priority_scores:initP.priority_scores||{urgency:1,safety:1,cost_impact:1,time_sensitivity:1} })
   const [tab, setTab] = useState('progress')
   const [newTask, setNewTask] = useState('')
+  const [newTaskDue, setNewTaskDue] = useState('')
   const [logNote, setLogNote] = useState('')
   const [newBid, setNewBid] = useState({ contractor_id:'', amount:'', notes:'', documents:[] })
   const [showAddBid, setShowAddBid] = useState(false)
@@ -568,7 +658,7 @@ function ProjectDetail({ project: initP, contractors, onEdit, onDelete, onClose,
 
   // Tasks
   const saveTasks = async (tasks) => { await save({tasks}) }
-  const addTask   = async () => { if (!newTask.trim()) return; await saveTasks([...(p.tasks||[]),{id:uid(),text:newTask.trim(),done:false}]); setNewTask('') }
+  const addTask   = async () => { if (!newTask.trim()) return; await saveTasks([...(p.tasks||[]),{id:uid(),text:newTask.trim(),done:false,due:newTaskDue||null}]); setNewTask(''); setNewTaskDue('') }
   const toggleTask = id => saveTasks((p.tasks||[]).map(t=>t.id===id?{...t,done:!t.done}:t))
   const removeTask = id => saveTasks((p.tasks||[]).filter(t=>t.id!==id))
 
@@ -871,19 +961,14 @@ function ProjectDetail({ project: initP, contractors, onEdit, onDelete, onClose,
       {tab==='tasks' && (
         <div>
           <div style={{ display:'flex', gap:8, marginBottom:10 }}>
-            <input style={{ ...T.input, fontSize:13 }} placeholder="Add a task…" value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTask()} />
+            <input style={{ ...T.input, flex:2, fontSize:13 }} placeholder="Add a task…" value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>e.key==='Enter'&&addTask()} />
+            <input type="date" style={{ ...T.input, flex:1, fontSize:12, color:newTaskDue?'#1D1D1F':'#9CA3AF' }} value={newTaskDue} onChange={e=>setNewTaskDue(e.target.value)} title="Due date (optional)" />
             <button onClick={addTask} style={T.btnSecondary}>Add</button>
           </div>
           {(p.tasks||[]).length===0
             ? <div style={{ textAlign:'center', color:'#9CA3AF', fontSize:13, padding:24, background:'#F9FAFB', borderRadius:10 }}>No tasks yet</div>
             : (p.tasks||[]).map(t => (
-                <div key={t.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 11px', background:'#F9FAFB', borderRadius:8, marginBottom:5, border:'1px solid #F3F4F6' }}>
-                  <div onClick={()=>toggleTask(t.id)} style={{ width:17, height:17, borderRadius:5, border:t.done?'none':'1.5px solid #D1D5DB', background:t.done?'#1D1D1F':'transparent', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', transition:'all .15s' }}>
-                    {t.done&&<span style={{ fontSize:9, color:'#fff', fontWeight:800 }}>✓</span>}
-                  </div>
-                  <span onClick={()=>toggleTask(t.id)} style={{ flex:1, fontSize:13, color:t.done?'#9CA3AF':'#1D1D1F', textDecoration:t.done?'line-through':'none', cursor:'pointer' }}>{t.text}</span>
-                  <button onClick={()=>removeTask(t.id)} style={{ color:'#D1D5DB', fontSize:16, background:'none', border:'none', cursor:'pointer' }}>×</button>
-                </div>
+                <TaskItem key={t.id} task={t} onToggle={()=>toggleTask(t.id)} onRemove={()=>removeTask(t.id)} />
               ))
           }
           <div style={{ marginTop:8, fontSize:12, color:'#9CA3AF' }}>
@@ -1174,8 +1259,8 @@ function ProjectForm({ initial, contractors, onSave, onClose }) {
         <Field label="End Date"><input style={T.input} type="date" value={form.endDate} onChange={e=>set('endDate',e.target.value)} /></Field>
       </Row2>
       <Row2>
-        <Field label="Budget ($)"><input style={T.input} type="number" value={form.budget} onChange={e=>set('budget',+e.target.value)} /></Field>
-        <Field label="Spent ($)"><input style={T.input} type="number" value={form.spent} onChange={e=>set('spent',+e.target.value)} /></Field>
+        <Field label="Budget ($)"><input style={T.input} type="text" inputMode="numeric" value={form.budget||''} onChange={e=>set('budget', e.target.value.replace(/[^0-9.]/g,''))} placeholder="0" /></Field>
+        <Field label="Spent ($)"><input style={T.input} type="text" inputMode="numeric" value={form.spent||''} onChange={e=>set('spent', e.target.value.replace(/[^0-9.]/g,''))} placeholder="0" /></Field>
       </Row2>
       <div style={{ marginBottom:14 }}>
         <label style={T.label}>Assign Contractors</label>
