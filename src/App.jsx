@@ -137,13 +137,19 @@ export default function App() {
   async function loadAll() {
     setLoading(true)
     // Check if current user is a member of someone else's org
-    const { data: membership } = await supabase
-      .from('org_members')
-      .select('status, orgs(owner_id)')
-      .eq('member_id', session.user.id)
-      .eq('status', 'active')
-      .maybeSingle()
-    setIsOwner(!membership)
+    // Wrapped in try/catch — gracefully handles case where migration hasn't been run yet
+    try {
+      const { data: membership, error } = await supabase
+        .from('org_members')
+        .select('status, orgs(owner_id)')
+        .eq('member_id', session.user.id)
+        .eq('status', 'active')
+        .maybeSingle()
+      if (!error) setIsOwner(!membership)
+    } catch (e) {
+      // org_members table doesn't exist yet — treat as owner
+      setIsOwner(true)
+    }
     const [{ data: c }, { data: p }] = await Promise.all([
       supabase.from('contractors').select('*').order('created_at', { ascending: false }),
       supabase.from('projects').select('*, project_contractors(contractor_id)').order('created_at', { ascending: false }),
@@ -495,31 +501,32 @@ function SettingsView({ session, isOwner, showToast }) {
   useEffect(() => { loadOrgData() }, [])
 
   async function loadOrgData() {
-    // Get or create org for this user (only if owner)
-    if (!isOwner) {
-      // Member view: show which org they belong to
-      const { data } = await supabase
+    try {
+      if (!isOwner) {
+        const { data } = await supabase
+          .from('org_members')
+          .select('invited_email, status, joined_at, orgs(owner_id)')
+          .eq('member_id', session.user.id)
+          .maybeSingle()
+        if (data) setMembers([{ _isSelf: true, ...data }])
+        return
+      }
+      let { data: org } = await supabase.from('orgs').select('id').eq('owner_id', session.user.id).maybeSingle()
+      if (!org) {
+        const { data: newOrg } = await supabase.from('orgs').insert({ owner_id: session.user.id }).select('id').single()
+        org = newOrg
+      }
+      if (!org) return
+      setOrgId(org.id)
+      const { data: mems } = await supabase
         .from('org_members')
-        .select('invited_email, status, joined_at, orgs(owner_id)')
-        .eq('member_id', session.user.id)
-        .maybeSingle()
-      if (data) setMembers([{ _isSelf: true, ...data }])
-      return
+        .select('*')
+        .eq('org_id', org.id)
+        .order('invited_at', { ascending: false })
+      setMembers(mems || [])
+    } catch(e) {
+      setOrgId(null)
     }
-    // Owner: get or create org
-    let { data: org } = await supabase.from('orgs').select('id').eq('owner_id', session.user.id).maybeSingle()
-    if (!org) {
-      const { data: newOrg } = await supabase.from('orgs').insert({ owner_id: session.user.id }).select('id').single()
-      org = newOrg
-    }
-    if (!org) return
-    setOrgId(org.id)
-    const { data: mems } = await supabase
-      .from('org_members')
-      .select('*')
-      .eq('org_id', org.id)
-      .order('invited_at', { ascending: false })
-    setMembers(mems || [])
   }
 
   async function sendInvite() {
@@ -566,6 +573,16 @@ function SettingsView({ session, isOwner, showToast }) {
           <button onClick={()=>supabase.auth.signOut()} style={{ ...T.btnSecondary, marginLeft:'auto', fontSize:12, padding:'6px 13px' }}>Sign out</button>
         </div>
       </div>
+
+      {/* Migration notice */}
+      {isOwner && orgId === null && (
+        <div style={{ ...T.card, background:'#FEF3C7', border:'1px solid #FDE68A' }}>
+          <div style={{ fontSize:13, fontWeight:600, color:'#92400E', marginBottom:6 }}>⚠️ One more step to enable team access</div>
+          <div style={{ fontSize:13, color:'#78350F', lineHeight:1.6 }}>
+            Run <strong>supabase-migration-v3.sql</strong> in your Supabase Dashboard → SQL Editor to enable the invite system. Your existing data is unaffected.
+          </div>
+        </div>
+      )}
 
       {/* Owner: Team access */}
       {isOwner && (
