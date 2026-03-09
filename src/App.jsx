@@ -596,7 +596,7 @@ function SettingsView({ session, isOwner, showToast }) {
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontSize:13, fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{m.invited_email}</div>
                     <div style={{ fontSize:11, color:'#9CA3AF', marginTop:1 }}>
-                      {m.status === 'active' ? `Joined ${new Date(m.joined_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}` : 'Invite pending — hasn't signed up yet'}
+                      {m.status === 'active' ? `Joined ${new Date(m.joined_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}` : "Invite pending \u2014 hasn't signed up yet"}
                     </div>
                   </div>
                   <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:6, background:m.status==='active'?'#D1FAE5':'#FEF3C7', color:m.status==='active'?'#059669':'#D97706' }}>
