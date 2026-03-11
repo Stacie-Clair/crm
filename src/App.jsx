@@ -119,11 +119,13 @@ export default function App() {
       setSession(s)
       // Auto-link invite: if new user's email matches a pending invite, activate it
       if (s && (_e === 'SIGNED_IN' || _e === 'SIGNED_UP')) {
-        await supabase
-          .from('org_members')
-          .update({ member_id: s.user.id, status: 'active', joined_at: new Date().toISOString() })
-          .eq('invited_email', s.user.email.toLowerCase())
-          .eq('status', 'pending')
+        try {
+          await supabase
+            .from('org_members')
+            .update({ member_id: s.user.id, status: 'active', joined_at: new Date().toISOString() })
+            .eq('invited_email', s.user.email.toLowerCase())
+            .eq('status', 'pending')
+        } catch(e) { /* org_members table not yet created — safe to ignore */ }
       }
     })
     return () => subscription.unsubscribe()
