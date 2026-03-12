@@ -111,23 +111,10 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [tradeFilter, setTradeFilter] = useState('All')
   const [toast, setToast] = useState(null)
-  const [isOwner, setIsOwner] = useState(true)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_e, s) => {
-      setSession(s)
-      // Auto-link invite: if new user's email matches a pending invite, activate it
-      if (s && (_e === 'SIGNED_IN' || _e === 'SIGNED_UP')) {
-        try {
-          await supabase
-            .from('org_members')
-            .update({ member_id: s.user.id, status: 'active', joined_at: new Date().toISOString() })
-            .eq('invited_email', s.user.email.toLowerCase())
-            .eq('status', 'pending')
-        } catch(e) { /* org_members table not yet created — safe to ignore */ }
-      }
-    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
     return () => subscription.unsubscribe()
   }, [])
 
@@ -138,20 +125,6 @@ export default function App() {
 
   async function loadAll() {
     setLoading(true)
-    // Check if current user is a member of someone else's org
-    // Wrapped in try/catch — gracefully handles case where migration hasn't been run yet
-    try {
-      const { data: membership, error } = await supabase
-        .from('org_members')
-        .select('status, orgs(owner_id)')
-        .eq('member_id', session.user.id)
-        .eq('status', 'active')
-        .maybeSingle()
-      if (!error) setIsOwner(!membership)
-    } catch (e) {
-      // org_members table doesn't exist yet — treat as owner
-      setIsOwner(true)
-    }
     const [{ data: c }, { data: p }] = await Promise.all([
       supabase.from('contractors').select('*').order('created_at', { ascending: false }),
       supabase.from('projects').select('*, project_contractors(contractor_id)').order('created_at', { ascending: false }),
@@ -278,7 +251,7 @@ export default function App() {
           <span style={{ fontWeight:700, fontSize:15, letterSpacing:'-0.3px' }}>ContractorCRM</span>
         </div>
         <div style={{ display:'flex', gap:2 }}>
-          {[['dashboard','Dashboard'],['contractors','Contractors'],['projects','Projects'],['settings','Settings']].map(([v,l])=>(
+          {[['dashboard','Dashboard'],['contractors','Contractors'],['projects','Projects']].map(([v,l])=>(
             <button key={v} onClick={()=>{setView(v);setSearch('');setTradeFilter('All')}}
               style={{ padding:'5px 13px', borderRadius:7, fontSize:13, fontWeight:500, color:view===v?'#1D1D1F':'#9CA3AF', background:view===v?'#F3F4F6':'transparent', cursor:'pointer', border:'none', transition:'all .15s' }}>
               {l}
@@ -293,13 +266,12 @@ export default function App() {
 
       <div style={{ maxWidth:1300, margin:'0 auto', padding:'32px 28px', display:'flex', flexDirection:'column', gap:24 }}>
         <h1 style={{ fontSize:26, fontWeight:700, letterSpacing:'-0.6px' }}>
-          {view==='dashboard'?'Overview':view==='contractors'?'Contractors':view==='projects'?'Projects':'Settings'}
+          {view==='dashboard'?'Overview':view==='contractors'?'Contractors':'Projects'}
         </h1>
 
         {view==='dashboard' && <DashboardView contractors={contractors} projects={projects} activeProjects={activeProjects} totalBudget={totalBudget} totalSpent={totalSpent} avgRating={avgRating} setView={setView} setModal={setModal} updateProjectField={updateProjectField} setProjects={setProjects} />}
         {view==='contractors' && <ContractorsView contractors={filteredContractors} allCount={contractors.length} search={search} setSearch={setSearch} tradeFilter={tradeFilter} setTradeFilter={setTradeFilter} setModal={setModal} />}
         {view==='projects' && <ProjectsView projects={projects} contractors={contractors} setModal={setModal} />}
-        {view==='settings' && <SettingsView session={session} isOwner={isOwner} showToast={showToast} />}
       </div>
 
       {modal?.type==='contractor-form'   && <ContractorForm initial={modal.data} onSave={saveContractor} onClose={()=>setModal(null)} />}
@@ -489,174 +461,6 @@ function OpenTasksSection({ projects, updateProjectField, setProjects, setModal 
             ))}
           </div>
       }
-    </div>
-  )
-}
-
-// ─── Settings View ───────────────────────────────────────────────────────────
-function SettingsView({ session, isOwner, showToast }) {
-  const [members, setMembers] = useState([])
-  const [inviteEmail, setInviteEmail] = useState('')
-  const [sending, setSending] = useState(false)
-  const [orgId, setOrgId] = useState(null)
-
-  useEffect(() => { loadOrgData() }, [])
-
-  async function loadOrgData() {
-    try {
-      if (!isOwner) {
-        const { data } = await supabase
-          .from('org_members')
-          .select('invited_email, status, joined_at, orgs(owner_id)')
-          .eq('member_id', session.user.id)
-          .maybeSingle()
-        if (data) setMembers([{ _isSelf: true, ...data }])
-        return
-      }
-      let { data: org } = await supabase.from('orgs').select('id').eq('owner_id', session.user.id).maybeSingle()
-      if (!org) {
-        const { data: newOrg } = await supabase.from('orgs').insert({ owner_id: session.user.id }).select('id').single()
-        org = newOrg
-      }
-      if (!org) return
-      setOrgId(org.id)
-      const { data: mems } = await supabase
-        .from('org_members')
-        .select('*')
-        .eq('org_id', org.id)
-        .order('invited_at', { ascending: false })
-      setMembers(mems || [])
-    } catch(e) {
-      setOrgId(null)
-    }
-  }
-
-  async function sendInvite() {
-    if (!inviteEmail.trim() || !orgId) return
-    setSending(true)
-    // Check if already invited
-    const existing = members.find(m => m.invited_email.toLowerCase() === inviteEmail.trim().toLowerCase())
-    if (existing) { showToast('That email is already invited', 'warn'); setSending(false); return }
-    // Check if that user already exists in auth — if so, link them immediately
-    const { data: insert, error } = await supabase
-      .from('org_members')
-      .insert({ org_id: orgId, invited_email: inviteEmail.trim().toLowerCase(), status: 'pending' })
-      .select()
-      .single()
-    if (error) { showToast('Error sending invite', 'warn'); setSending(false); return }
-    setMembers(prev => [insert, ...prev])
-    setInviteEmail('')
-    showToast('Invite sent! They can sign up and will get access automatically.')
-    setSending(false)
-  }
-
-  async function removeMember(memberId) {
-    await supabase.from('org_members').delete().eq('id', memberId)
-    setMembers(prev => prev.filter(m => m.id !== memberId))
-    showToast('Access removed')
-  }
-
-  const inS = { width:'100%', background:'#F9FAFB', border:'1px solid #E5E7EB', borderRadius:9, padding:'9px 13px', color:'#1D1D1F', fontSize:14, fontFamily:"'Figtree',sans-serif" }
-
-  return (
-    <div style={{ display:'flex', flexDirection:'column', gap:20, maxWidth:640, animation:'fadeUp .3s ease' }}>
-
-      {/* Account */}
-      <div style={T.card}>
-        <div style={{ fontSize:12, fontWeight:600, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.4px', marginBottom:14 }}>Account</div>
-        <div style={{ display:'flex', alignItems:'center', gap:14 }}>
-          <div style={{ width:44, height:44, borderRadius:12, background:'#1D1D1F', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontSize:18, fontWeight:700, flexShrink:0 }}>
-            {session.user.email[0].toUpperCase()}
-          </div>
-          <div>
-            <div style={{ fontSize:14, fontWeight:600 }}>{session.user.email}</div>
-            <div style={{ fontSize:12, color:'#9CA3AF', marginTop:2 }}>{isOwner ? 'Owner · Full access' : 'Member · Shared access'}</div>
-          </div>
-          <button onClick={()=>supabase.auth.signOut()} style={{ ...T.btnSecondary, marginLeft:'auto', fontSize:12, padding:'6px 13px' }}>Sign out</button>
-        </div>
-      </div>
-
-      {/* Migration notice */}
-      {isOwner && orgId === null && (
-        <div style={{ ...T.card, background:'#FEF3C7', border:'1px solid #FDE68A' }}>
-          <div style={{ fontSize:13, fontWeight:600, color:'#92400E', marginBottom:6 }}>⚠️ One more step to enable team access</div>
-          <div style={{ fontSize:13, color:'#78350F', lineHeight:1.6 }}>
-            Run <strong>supabase-migration-v3.sql</strong> in your Supabase Dashboard → SQL Editor to enable the invite system. Your existing data is unaffected.
-          </div>
-        </div>
-      )}
-
-      {/* Owner: Team access */}
-      {isOwner && (
-        <div style={T.card}>
-          <div style={{ fontSize:12, fontWeight:600, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.4px', marginBottom:4 }}>Team Access</div>
-          <div style={{ fontSize:13, color:'#6B7280', marginBottom:16 }}>
-            Invite someone by email. Once they sign up, they'll see all your contractors and projects.
-          </div>
-
-          {/* Invite input */}
-          <div style={{ display:'flex', gap:8, marginBottom:20 }}>
-            <input style={{ ...inS, flex:1 }} type="email" placeholder="colleague@email.com"
-              value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)}
-              onKeyDown={e=>e.key==='Enter'&&sendInvite()} />
-            <button onClick={sendInvite} disabled={sending||!inviteEmail.trim()} style={{ ...T.btnPrimary, opacity:sending||!inviteEmail.trim()?0.5:1 }}>
-              {sending ? 'Sending…' : 'Send Invite'}
-            </button>
-          </div>
-
-          {/* Members list */}
-          {members.length === 0
-            ? <div style={{ textAlign:'center', color:'#9CA3AF', fontSize:13, padding:'20px 0' }}>No team members yet</div>
-            : members.map(m => (
-                <div key={m.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 0', borderTop:'1px solid #F3F4F6' }}>
-                  <div style={{ width:34, height:34, borderRadius:9, background:'#F3F4F6', display:'flex', alignItems:'center', justifyContent:'center', color:'#6B7280', fontSize:15, fontWeight:700, flexShrink:0 }}>
-                    {m.invited_email[0].toUpperCase()}
-                  </div>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:13, fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{m.invited_email}</div>
-                    <div style={{ fontSize:11, color:'#9CA3AF', marginTop:1 }}>
-                      {m.status === 'active' ? `Joined ${new Date(m.joined_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}` : "Invite pending \u2014 hasn't signed up yet"}
-                    </div>
-                  </div>
-                  <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:6, background:m.status==='active'?'#D1FAE5':'#FEF3C7', color:m.status==='active'?'#059669':'#D97706' }}>
-                    {m.status === 'active' ? 'Active' : 'Pending'}
-                  </span>
-                  <button onClick={()=>removeMember(m.id)} style={{ color:'#EF4444', fontSize:12, fontWeight:500, background:'none', border:'none', cursor:'pointer', padding:'4px 8px', borderRadius:6, flexShrink:0 }}
-                    onMouseEnter={e=>e.target.style.background='#FEF2F2'} onMouseLeave={e=>e.target.style.background='none'}>
-                    Remove
-                  </button>
-                </div>
-              ))
-          }
-        </div>
-      )}
-
-      {/* Member: show org info */}
-      {!isOwner && (
-        <div style={T.card}>
-          <div style={{ fontSize:12, fontWeight:600, color:'#9CA3AF', textTransform:'uppercase', letterSpacing:'0.4px', marginBottom:14 }}>Shared Access</div>
-          <div style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 14px', background:'#F0FDF4', borderRadius:10, border:'1px solid #BBF7D0' }}>
-            <span style={{ fontSize:20 }}>✅</span>
-            <div>
-              <div style={{ fontSize:13, fontWeight:600, color:'#065F46' }}>You have shared access</div>
-              <div style={{ fontSize:12, color:'#6B7280', marginTop:2 }}>You can view and edit all contractors and projects for this account.</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* How it works */}
-      {isOwner && (
-        <div style={{ ...T.card, background:'#FFFBEB', border:'1px solid #FDE68A' }}>
-          <div style={{ fontSize:12, fontWeight:600, color:'#92400E', textTransform:'uppercase', letterSpacing:'0.4px', marginBottom:10 }}>💡 How invites work</div>
-          <div style={{ fontSize:13, color:'#78350F', lineHeight:1.7 }}>
-            1. Enter their email and click Send Invite<br/>
-            2. They sign up at your app URL using that same email<br/>
-            3. On their first login, they'll automatically see your data<br/>
-            4. You can remove their access at any time from this page
-          </div>
-        </div>
-      )}
     </div>
   )
 }
