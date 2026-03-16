@@ -21,12 +21,12 @@ function fmtDate(d) { if (!d) return '—'; return new Date(d+'T12:00:00').toLoc
 function fmtTs(ts) { return new Date(ts).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) }
 function calcPriorityScore(p) {
   const s = p.priority_scores || {}
-  const vals = [s.urgency||0, s.safety||0, s.cost_impact||0, s.time_sensitivity||0]
+  const vals = [s.urgency||0, s.safety||0, s.cost_impact||0, s.time_sensitivity||0, s.quality_of_life||0]
   return vals.reduce((a,b)=>a+b,0)
 }
 function priorityLabel(score) {
-  if (score >= 14) return 'high'
-  if (score >= 8)  return 'medium'
+  if (score >= 18) return 'high'
+  if (score >= 10) return 'medium'
   return 'low'
 }
 function calcProgress(milestones) {
@@ -341,7 +341,7 @@ function DashboardView({ contractors, projects, activeProjects, totalBudget, tot
                   <div style={{ fontSize:13, fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{p.name}</div>
                   <div style={{ fontSize:11, color:'#9CA3AF' }}>{p.property}</div>
                 </div>
-                <span style={T.priLabel(score)}>{lbl} · {score}/20</span>
+                <span style={T.priLabel(score)}>{lbl} · {score}/25</span>
               </div>
             )
           })}
@@ -637,7 +637,7 @@ function ProjectRow({ project: p, contractors, onClick }) {
 
 // ─── Project Detail (full) ────────────────────────────────────────────────────
 function ProjectDetail({ project: initP, contractors, onEdit, onDelete, onClose, updateProjectField, showToast }) {
-  const [p, setP] = useState({ ...initP, milestones:initP.milestones||[], bids:initP.bids||[], activity_log:initP.activity_log||[], priority_scores:initP.priority_scores||{urgency:1,safety:1,cost_impact:1,time_sensitivity:1} })
+  const [p, setP] = useState({ ...initP, milestones:initP.milestones||[], bids:initP.bids||[], activity_log:initP.activity_log||[], priority_scores:initP.priority_scores||{urgency:1,safety:1,cost_impact:1,time_sensitivity:1,quality_of_life:1} })
   const [tab, setTab] = useState('progress')
   const [newTask, setNewTask] = useState('')
   const [newTaskDue, setNewTaskDue] = useState('')
@@ -746,7 +746,7 @@ function ProjectDetail({ project: initP, contractors, onEdit, onDelete, onClose,
         </div>
         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
           <span style={T.badge(p.status)}>{STATUS_LABELS[p.status]}</span>
-          {score>0 && <span style={T.priLabel(score)}>{priorityLabel(score)} · {score}/20</span>}
+          {score>0 && <span style={T.priLabel(score)}>{priorityLabel(score)} · {score}/25</span>}
           <button onClick={()=>onEdit(p)} style={T.btnSecondary}>Edit</button>
           <button onClick={onClose} style={{ color:'#9CA3AF', fontSize:20, lineHeight:1, background:'none', border:'none', cursor:'pointer', padding:4 }}>✕</button>
         </div>
@@ -942,7 +942,7 @@ function ProjectDetail({ project: initP, contractors, onEdit, onDelete, onClose,
         <div>
           <div style={{ background:'#F9FAFB', borderRadius:10, padding:'14px 16px', marginBottom:16, border:'1px solid #F3F4F6', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
             <div>
-              <div style={{ fontSize:28, fontWeight:800, letterSpacing:'-1px' }}>{score}<span style={{ fontSize:16, fontWeight:500, color:'#9CA3AF' }}>/20</span></div>
+              <div style={{ fontSize:28, fontWeight:800, letterSpacing:'-1px' }}>{score}<span style={{ fontSize:16, fontWeight:500, color:'#9CA3AF' }}>/25</span></div>
               <div style={{ fontSize:12, color:'#9CA3AF', marginTop:2 }}>Priority Score</div>
             </div>
             <span style={{ ...T.priLabel(score), fontSize:14, padding:'6px 14px' }}>{priorityLabel(score).toUpperCase()} PRIORITY</span>
@@ -951,6 +951,7 @@ function ProjectDetail({ project: initP, contractors, onEdit, onDelete, onClose,
           <ScoreSlider label="Safety Risk" value={p.priority_scores?.safety||1} onChange={v=>updatePriorityScore('safety',v)} hint="Risk if left unaddressed?" />
           <ScoreSlider label="Cost Impact" value={p.priority_scores?.cost_impact||1} onChange={v=>updatePriorityScore('cost_impact',v)} hint="Will delay increase cost?" />
           <ScoreSlider label="Time Sensitivity" value={p.priority_scores?.time_sensitivity||1} onChange={v=>updatePriorityScore('time_sensitivity',v)} hint="Weather, permits, contractor availability?" />
+          <ScoreSlider label="Quality of Life" value={p.priority_scores?.quality_of_life||1} onChange={v=>updatePriorityScore('quality_of_life',v)} hint="How much will this improve daily living?" />
           <div style={{ background:'#FFFBEB', borderRadius:9, padding:'10px 14px', border:'1px solid #FDE68A', fontSize:12, color:'#92400E' }}>
             💡 Projects are automatically sorted by priority score in the Projects view.
           </div>
