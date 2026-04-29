@@ -111,6 +111,7 @@ export default function App() {
   const [search, setSearch] = useState('')
   const [tradeFilter, setTradeFilter] = useState('All')
   const [toast, setToast] = useState(null)
+  const [reminders, setReminders] = useState([])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
@@ -125,12 +126,14 @@ export default function App() {
 
   async function loadAll() {
     setLoading(true)
-    const [{ data: c }, { data: p }] = await Promise.all([
+    const [{ data: c }, { data: p }, { data: r }] = await Promise.all([
       supabase.from('contractors').select('*').order('created_at', { ascending: false }),
       supabase.from('projects').select('*, project_contractors(contractor_id)').order('created_at', { ascending: false }),
+      supabase.from('reminders').select('*').order('created_at', { ascending: false }),
     ])
     setContractors(c || [])
     setProjects((p||[]).map(proj => ({ ...proj, contractors:(proj.project_contractors||[]).map(pc=>pc.contractor_id) })))
+    setReminders(r || [])
     setLoading(false)
   }
 
@@ -251,7 +254,7 @@ export default function App() {
           <span style={{ fontWeight:700, fontSize:15, letterSpacing:'-0.3px' }}>ContractorCRM</span>
         </div>
         <div style={{ display:'flex', gap:2 }}>
-          {[['dashboard','Dashboard'],['contractors','Contractors'],['projects','Projects']].map(([v,l])=>(
+          {[['dashboard','Dashboard'],['contractors','Contractors'],['projects','Projects'],['maintenance','Maintenance']].map(([v,l])=>(
             <button key={v} onClick={()=>{setView(v);setSearch('');setTradeFilter('All')}}
               style={{ padding:'5px 13px', borderRadius:7, fontSize:13, fontWeight:500, color:view===v?'#1D1D1F':'#9CA3AF', background:view===v?'#F3F4F6':'transparent', cursor:'pointer', border:'none', transition:'all .15s' }}>
               {l}
@@ -266,12 +269,13 @@ export default function App() {
 
       <div style={{ maxWidth:1300, margin:'0 auto', padding:'32px 28px', display:'flex', flexDirection:'column', gap:24 }}>
         <h1 style={{ fontSize:26, fontWeight:700, letterSpacing:'-0.6px' }}>
-          {view==='dashboard'?'Overview':view==='contractors'?'Contractors':'Projects'}
+          {view==='dashboard'?'Overview':view==='contractors'?'Contractors':view==='projects'?'Projects':'Maintenance'}
         </h1>
 
-        {view==='dashboard' && <DashboardView contractors={contractors} projects={projects} activeProjects={activeProjects} totalBudget={totalBudget} totalSpent={totalSpent} avgRating={avgRating} setView={setView} setModal={setModal} updateProjectField={updateProjectField} setProjects={setProjects} />}
+        {view==='dashboard' && <DashboardView contractors={contractors} projects={projects} activeProjects={activeProjects} totalBudget={totalBudget} totalSpent={totalSpent} avgRating={avgRating} setView={setView} setModal={setModal} updateProjectField={updateProjectField} setProjects={setProjects} reminders={reminders} />}
         {view==='contractors' && <ContractorsView contractors={filteredContractors} allCount={contractors.length} search={search} setSearch={setSearch} tradeFilter={tradeFilter} setTradeFilter={setTradeFilter} setModal={setModal} />}
         {view==='projects' && <ProjectsView projects={projects} contractors={contractors} setModal={setModal} />}
+        {view==='maintenance' && <MaintenanceView reminders={reminders} setReminders={setReminders} session={session} showToast={showToast} projects={projects} />}
       </div>
 
       {modal?.type==='contractor-form'   && <ContractorForm initial={modal.data} onSave={saveContractor} onClose={()=>setModal(null)} />}
@@ -293,7 +297,7 @@ function Loader() {
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
-function DashboardView({ contractors, projects, activeProjects, totalBudget, totalSpent, avgRating, setView, setModal, updateProjectField, setProjects }) {
+function DashboardView({ contractors, projects, activeProjects, totalBudget, totalSpent, avgRating, setView, setModal, updateProjectField, setProjects, reminders=[] }) {
   const sorted = [...projects].sort((a,b) => calcPriorityScore(b) - calcPriorityScore(a))
   const topPriority = sorted.slice(0,3)
   return (
@@ -365,6 +369,9 @@ function DashboardView({ contractors, projects, activeProjects, totalBudget, tot
       {/* Open Tasks */}
       <OpenTasksSection projects={projects} updateProjectField={updateProjectField} setProjects={setProjects} setModal={setModal} />
 
+      {/* Maintenance Widget */}
+      <MaintenanceWidget reminders={reminders} setView={setView} />
+
       {/* Contractors */}
       <div>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
@@ -374,6 +381,261 @@ function DashboardView({ contractors, projects, activeProjects, totalBudget, tot
         <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))', gap:12 }}>
           {contractors.slice(0,4).map(c=><ContractorCard key={c.id} contractor={c} onClick={()=>setModal({type:'contractor-detail',data:c})} />)}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Maintenance Helpers ──────────────────────────────────────────────────────
+const FREQ_DAYS = { weekly:7, monthly:30, quarterly:91, biannual:182, annual:365 }
+const FREQ_LABELS = { weekly:'Weekly', monthly:'Monthly', quarterly:'Quarterly', biannual:'Every 6 months', annual:'Annually' }
+const MAINT_CATEGORIES = ['HVAC','Plumbing','Electrical','Exterior','Interior','Appliances','Safety','Landscaping','Other']
+
+function nextDueDate(lastDone, frequency, customDays) {
+  if (!lastDone) return null
+  const days = frequency === 'custom' ? (customDays||30) : (FREQ_DAYS[frequency]||30)
+  const d = new Date(lastDone + 'T00:00:00')
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0,10)
+}
+
+function reminderStatus(r) {
+  const next = r.next_due || nextDueDate(r.last_done, r.frequency, r.custom_days)
+  if (!next) return { label:'Not yet done', color:'#9CA3AF', bg:'#F3F4F6', urgency:3 }
+  const today = new Date(); today.setHours(0,0,0,0)
+  const due = new Date(next + 'T00:00:00')
+  const diff = Math.round((due - today) / (1000*60*60*24))
+  if (diff < 0)  return { label:`${Math.abs(diff)}d overdue`, color:'#EF4444', bg:'#FEF2F2', urgency:0, next }
+  if (diff === 0) return { label:'Due today',                 color:'#D97706', bg:'#FEF3C7', urgency:1, next }
+  if (diff <= 14) return { label:`Due in ${diff}d`,           color:'#D97706', bg:'#FEF3C7', urgency:1, next }
+  return { label:new Date(next+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}), color:'#10B981', bg:'#D1FAE5', urgency:2, next }
+}
+
+// ─── Dashboard Maintenance Widget ────────────────────────────────────────────
+function MaintenanceWidget({ reminders, setView }) {
+  const urgent = reminders
+    .map(r => ({ ...r, _status: reminderStatus(r) }))
+    .filter(r => r._status.urgency <= 1)
+    .sort((a,b) => a._status.urgency - b._status.urgency)
+    .slice(0, 5)
+
+  if (reminders.length === 0) return null
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+        <h2 style={{ fontSize:15, fontWeight:700 }}>🔧 Maintenance Due</h2>
+        <button style={T.btnSecondary} onClick={()=>setView('maintenance')}>View all</button>
+      </div>
+      {urgent.length === 0
+        ? <div style={{ ...T.card, textAlign:'center', color:'#10B981', fontSize:13, padding:20, fontWeight:500 }}>✅ All maintenance up to date</div>
+        : <div style={{ ...T.card, padding:0, overflow:'hidden' }}>
+            {urgent.map((r,i) => (
+              <div key={r.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'11px 16px', borderBottom:i<urgent.length-1?'1px solid #F9FAFB':'none' }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:600 }}>{r.name}</div>
+                  <div style={{ fontSize:11, color:'#9CA3AF', marginTop:1 }}>{r.category} · {FREQ_LABELS[r.frequency]||'Custom'}{r.property ? ` · ${r.property}` : ''}</div>
+                </div>
+                <span style={{ fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:5, background:r._status.bg, color:r._status.color, whiteSpace:'nowrap' }}>{r._status.label}</span>
+              </div>
+            ))}
+          </div>
+      }
+    </div>
+  )
+}
+
+// ─── Maintenance View ─────────────────────────────────────────────────────────
+function MaintenanceView({ reminders, setReminders, session, showToast, projects=[] }) {
+  const [showForm, setShowForm] = useState(false)
+  const [editItem, setEditItem] = useState(null)
+  const [catFilter, setCatFilter] = useState('All')
+  const [propFilter, setPropFilter] = useState('All')
+  const properties = ['All', ...Array.from(new Set(projects.map(p=>p.property).filter(Boolean))).sort()]
+
+  const sorted = [...reminders]
+    .map(r => ({ ...r, _status: reminderStatus(r) }))
+    .sort((a,b) => a._status.urgency - b._status.urgency)
+  const filtered = sorted
+    .filter(r => catFilter === 'All' || r.category === catFilter)
+    .filter(r => propFilter === 'All' || r.property === propFilter)
+  const overdueCount = sorted.filter(r => r._status.urgency === 0).length
+  const dueCount = sorted.filter(r => r._status.urgency === 1).length
+
+  async function saveReminder(data) {
+    const next = nextDueDate(data.last_done, data.frequency, data.custom_days)
+    const payload = {
+      name: data.name, category: data.category, frequency: data.frequency,
+      custom_days: data.frequency === 'custom' ? parseInt(data.custom_days)||30 : null,
+      last_done: data.last_done || null, next_due: next, notes: data.notes||'',
+      property: data.property||'',
+      user_id: session.user.id,
+    }
+    if (data.id) {
+      const { data:u, error } = await supabase.from('reminders').update(payload).eq('id',data.id).select().single()
+      if (error) return showToast('Error: '+error.message,'warn')
+      setReminders(rs => rs.map(r => r.id===data.id ? u : r))
+      showToast('Reminder updated')
+    } else {
+      const { data:u, error } = await supabase.from('reminders').insert(payload).select().single()
+      if (error) return showToast('Error: '+error.message,'warn')
+      setReminders(rs => [u,...rs])
+      showToast('Reminder added')
+    }
+    setShowForm(false); setEditItem(null)
+  }
+
+  async function markDone(r) {
+    const today = new Date().toISOString().slice(0,10)
+    const next = nextDueDate(today, r.frequency, r.custom_days)
+    const { data:u, error } = await supabase.from('reminders').update({ last_done:today, next_due:next }).eq('id',r.id).select().single()
+    if (error) return showToast('Error','warn')
+    setReminders(rs => rs.map(x => x.id===r.id ? u : x))
+    showToast('Marked as done ✓')
+  }
+
+  async function deleteReminder(id) {
+    await supabase.from('reminders').delete().eq('id',id)
+    setReminders(rs => rs.filter(r => r.id!==id))
+    showToast('Reminder deleted','warn')
+  }
+
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:20, animation:'fadeUp .3s ease' }}>
+      {/* Header row */}
+      <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+        {overdueCount > 0 && <span style={{ fontSize:12, fontWeight:600, padding:'3px 10px', borderRadius:6, background:'#FEF2F2', color:'#EF4444' }}>{overdueCount} overdue</span>}
+        {dueCount > 0 && <span style={{ fontSize:12, fontWeight:600, padding:'3px 10px', borderRadius:6, background:'#FEF3C7', color:'#D97706' }}>{dueCount} due soon</span>}
+        <div style={{ flex:1 }} />
+        {/* Category filter */}
+        <select value={propFilter} onChange={e=>setPropFilter(e.target.value)}
+          style={{ ...T.input, width:'auto', fontSize:12, padding:'6px 10px', cursor:'pointer' }}>
+          {properties.map(p=><option key={p} value={p}>{p==='All'?'All properties':p}</option>)}
+        </select>
+        <select value={catFilter} onChange={e=>setCatFilter(e.target.value)}
+          style={{ ...T.input, width:'auto', fontSize:12, padding:'6px 10px', cursor:'pointer' }}>
+          <option value="All">All categories</option>
+          {MAINT_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+        </select>
+        <button onClick={()=>{setEditItem(null);setShowForm(true)}} style={T.btnPrimary}>+ Add Reminder</button>
+      </div>
+
+      {/* Form */}
+      {showForm && (
+        <ReminderForm initial={editItem} onSave={saveReminder} onClose={()=>{setShowForm(false);setEditItem(null)}} projects={projects} />
+      )}
+
+      {/* List */}
+      {filtered.length === 0
+        ? <div style={{ ...T.card, textAlign:'center', color:'#9CA3AF', fontSize:13, padding:40 }}>
+            {reminders.length===0 ? 'No reminders yet — add your first maintenance task above' : 'No reminders in this category'}
+          </div>
+        : <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+            {filtered.map(r => (
+              <ReminderCard key={r.id} reminder={r} onMarkDone={()=>markDone(r)} onEdit={()=>{setEditItem(r);setShowForm(true)}} onDelete={()=>deleteReminder(r.id)} />
+            ))}
+          </div>
+      }
+    </div>
+  )
+}
+
+function ReminderCard({ reminder: r, onMarkDone, onEdit, onDelete }) {
+  const st = r._status || reminderStatus(r)
+  return (
+    <div style={{ ...T.card, display:'flex', alignItems:'center', gap:16, border:`1px solid ${st.urgency===0?'#FECACA':st.urgency===1?'#FDE68A':'#E5E7EB'}` }}>
+      {/* Category icon col */}
+      <div style={{ width:42, height:42, borderRadius:11, background:st.bg, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20, flexShrink:0 }}>
+        {({HVAC:'❄️',Plumbing:'🚿',Electrical:'⚡',Exterior:'🏠',Interior:'🛋️',Appliances:'🔌',Safety:'🔒',Landscaping:'🌿',Other:'🔧'})[r.category]||'🔧'}
+      </div>
+      {/* Main info */}
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+          <span style={{ fontSize:14, fontWeight:700 }}>{r.name}</span>
+          <span style={{ fontSize:11, color:'#9CA3AF', background:'#F3F4F6', padding:'1px 7px', borderRadius:4 }}>{r.category}</span>
+          {r.property && <span style={{ fontSize:11, color:'#3B82F6', background:'#EFF6FF', padding:'1px 7px', borderRadius:4 }}>📍 {r.property}</span>}
+        </div>
+        <div style={{ fontSize:12, color:'#6B7280', marginTop:3 }}>
+          {FREQ_LABELS[r.frequency]||`Every ${r.custom_days} days`}
+          {r.last_done && ` · Last done ${new Date(r.last_done+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`}
+        </div>
+        {r.notes && <div style={{ fontSize:12, color:'#9CA3AF', marginTop:3, fontStyle:'italic' }}>{r.notes}</div>}
+      </div>
+      {/* Status badge */}
+      <span style={{ fontSize:12, fontWeight:600, padding:'3px 10px', borderRadius:6, background:st.bg, color:st.color, whiteSpace:'nowrap', flexShrink:0 }}>{st.label}</span>
+      {/* Actions */}
+      <div style={{ display:'flex', gap:6, flexShrink:0 }}>
+        <button onClick={onMarkDone} title="Mark as done today"
+          style={{ padding:'6px 12px', borderRadius:8, background:'#D1FAE5', color:'#065F46', fontSize:12, fontWeight:600, border:'none', cursor:'pointer' }}>✓ Done</button>
+        <button onClick={onEdit} style={{ ...T.btnSecondary, padding:'6px 10px', fontSize:12 }}>Edit</button>
+        <button onClick={onDelete} style={{ padding:'6px 10px', borderRadius:8, background:'none', color:'#EF4444', fontSize:12, border:'1px solid #FECACA', cursor:'pointer' }}>Delete</button>
+      </div>
+    </div>
+  )
+}
+
+function ReminderForm({ initial, onSave, onClose, projects=[] }) {
+  const properties = Array.from(new Set(projects.map(p=>p.property).filter(Boolean))).sort()
+  const [form, setForm] = useState({
+    name:'', category:'HVAC', frequency:'monthly', custom_days:30, last_done:'', notes:'', property:'',
+    ...(initial||{})
+  })
+  const set = (k,v) => setForm(f=>({...f,[k]:v}))
+
+  return (
+    <div style={{ ...T.card, border:'2px solid #E5E7EB', background:'#FAFAFA' }}>
+      <div style={{ fontSize:14, fontWeight:700, marginBottom:16 }}>{initial?'Edit Reminder':'New Maintenance Reminder'}</div>
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
+        <div style={{ gridColumn:'span 2' }}>
+          <label style={T.label}>Task Name</label>
+          <input style={T.input} placeholder="e.g. Replace furnace filter" value={form.name} onChange={e=>set('name',e.target.value)} />
+        </div>
+        <div>
+          <label style={T.label}>Category</label>
+          <select style={T.input} value={form.category} onChange={e=>set('category',e.target.value)}>
+            {MAINT_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={T.label}>Frequency</label>
+          <select style={T.input} value={form.frequency} onChange={e=>set('frequency',e.target.value)}>
+            {Object.entries(FREQ_LABELS).map(([v,l])=><option key={v} value={v}>{l}</option>)}
+            <option value="custom">Custom interval</option>
+          </select>
+        </div>
+        {form.frequency === 'custom' && (
+          <div>
+            <label style={T.label}>Every how many days?</label>
+            <input style={T.input} type="text" inputMode="numeric" value={form.custom_days} onChange={e=>set('custom_days',e.target.value.replace(/\D/g,''))} />
+          </div>
+        )}
+        <div>
+          <label style={T.label}>Last Done (optional)</label>
+          <input style={T.input} type="date" value={form.last_done||''} onChange={e=>set('last_done',e.target.value)} />
+        </div>
+        <div>
+          <label style={T.label}>Property</label>
+          {properties.length > 0
+            ? <select style={T.input} value={form.property} onChange={e=>set('property',e.target.value)}>
+                <option value="">No property</option>
+                {properties.map(p=><option key={p} value={p}>{p}</option>)}
+              </select>
+            : <input style={T.input} placeholder="e.g. 123 Oak St" value={form.property} onChange={e=>set('property',e.target.value)} />
+          }
+        </div>
+        <div style={{ gridColumn:'span 2' }}>
+          <label style={T.label}>Notes (optional)</label>
+          <input style={T.input} placeholder="e.g. Use 16x25x1 MERV-11 filter" value={form.notes} onChange={e=>set('notes',e.target.value)} />
+        </div>
+      </div>
+      {form.last_done && form.frequency && (
+        <div style={{ fontSize:12, color:'#6B7280', marginBottom:12, padding:'8px 12px', background:'#F0FDF4', borderRadius:8, border:'1px solid #BBF7D0' }}>
+          📅 Next due: <strong>{new Date((nextDueDate(form.last_done,form.frequency,form.custom_days)||'')+'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</strong>
+        </div>
+      )}
+      <div style={{ display:'flex', gap:8, justifyContent:'flex-end' }}>
+        <button onClick={onClose} style={T.btnSecondary}>Cancel</button>
+        <button onClick={()=>form.name.trim()&&onSave(form)} style={{ ...T.btnPrimary, opacity:form.name.trim()?1:0.5 }}>Save Reminder</button>
       </div>
     </div>
   )
